@@ -23,16 +23,16 @@ macro_rules! stride_count_impls {
 
 crate::for_each_int_type!(stride_count_impls; unsigned);
 
-pub trait Stride {
+pub trait StrideIndex {
     /// The stride index.
-    fn stride(self, stride: Self) -> Self;
+    fn stride_index(self, stride: Self) -> Self;
 }
 
 macro_rules! stride_impls {
     ($type:ty) => {
-        impl Stride for $type {
+        impl StrideIndex for $type {
             #[inline]
-            fn stride(self, stride: Self) -> Self {
+            fn stride_index(self, stride: Self) -> Self {
                 debug_assert_ne!(stride, 0, "stride is zero; causes division by zero.");
                 self / stride
             }
@@ -65,13 +65,13 @@ mod tests {
         let sc = length.stride_count(64);
         assert_eq!(sc, 2);
 
-        let si = 63u32.stride(64);
+        let si = 63u32.stride_index(64);
         assert_eq!(si, 0);
-        let si = 64u32.stride(64);
+        let si = 64u32.stride_index(64);
         assert_eq!(si, 1);
-        let si = 127u32.stride(64);
+        let si = 127u32.stride_index(64);
         assert_eq!(si, 1);
-        let si = 128u32.stride(64);
+        let si = 128u32.stride_index(64);
         assert_eq!(si, 2);
     }
 }
