@@ -6,18 +6,22 @@ type CM<T> = Counter<T>;
 /// for the purpose of incrementation.
 pub trait Increment {
     type Result;
+    /// Increments the value.
+    fn increment(&mut self);
     /// Increment and return the result of incrementation.
     fn pre_increment(&mut self) -> Self::Result;
     /// Increment and return the value before incrementation.
-    fn increment(&mut self) -> Self::Result;
+    fn post_increment(&mut self) -> Self::Result;
 }
 
 pub trait Decrement {
     type Result;
+    /// Decrements the value.
+    fn decrement(&mut self);
     /// Decrement and return the result of decrementation.
     fn pre_decrement(&mut self) -> Self::Result;
     /// Decrement and return the value before decrementation.
-    fn decrement(&mut self) -> Self::Result;
+    fn post_decrement(&mut self) -> Self::Result;
 }
 
 /// 
@@ -148,79 +152,111 @@ macro_rules! counter_impls {
     ($type:ty) => {
         impl crate::Sealed<CM<$type>> for $type {}
         impl Counter<$type> {
-            #[doc = "Increments and returns the result of incrementation."]
+            #[doc = "Increments the value."]
+            #[inline(always)]
+            pub const fn increment(&mut self) {
+                self.0 += 1;
+            }
+
+            #[doc = "Pre-increments value before returning it."]
             #[inline(always)]
             pub const fn pre_increment(&mut self) -> $type {
-                self.0 += 1;
+                self.increment();
                 self.0
             }
 
             #[doc = "Increments and returns the value prior to incrementation."]
             #[inline(always)]
-            pub const fn increment(&mut self) -> $type {
+            pub const fn post_increment(&mut self) -> $type {
                 let result = self.0;
-                self.0 += 1;
+                self.increment();
                 result
             }
+
+            #[doc = "Decrements the value."]
+            #[inline(always)]
+            pub const fn decrement(&mut self) {
+                self.0 -= 1;
+            }
             
-            #[doc = "Decrements and returns the result of decrementation."]
+            #[doc = "Pre-decrements value before returning it."]
             #[inline(always)]
             pub const fn pre_decrement(&mut self) -> $type {
-                self.0 -= 1;
+                self.decrement();
                 self.0
             }
             
             #[doc = "Decrements and returns the value prior to decrementation."]
             #[inline(always)]
-            pub const fn decrement(&mut self) -> $type {
+            pub const fn post_decrement(&mut self) -> $type {
                 let result = self.0;
-                self.0 -= 1;
+                self.decrement();
                 result
             }
         }
 
         impl Increment for Counter<$type> {
             type Result = $type;
-            #[doc = "Increments and returns the result of incrementation."]
-            #[inline]
+            #[doc = "Increments the value."]
+            #[inline(always)]
+            fn increment(&mut self) {
+                Counter::<$type>::increment(self)
+            }
+
+            #[doc = "Pre-increments value before returning it."]
+            #[inline(always)]
             fn pre_increment(&mut self) -> $type {
                 Counter::<$type>::pre_increment(self)
             }
 
             #[doc = "Increments and returns the value prior to incrementation."]
-            #[inline]
-            fn increment(&mut self) -> $type {
-                Counter::<$type>::increment(self)
+            #[inline(always)]
+            fn post_increment(&mut self) -> $type {
+                Counter::<$type>::post_increment(self)
             }
         }
 
         impl Decrement for Counter<$type> {
             type Result = $type;
-            #[doc = "Decrements and returns the result of decrementation."]
-            #[inline]
+
+            #[doc = "Decrements the value."]
+            #[inline(always)]
+            fn decrement(&mut self) {
+                Counter::<$type>::decrement(self);
+            }
+
+            #[doc = "Pre-decrements value before returning it."]
+            #[inline(always)]
             fn pre_decrement(&mut self) -> $type {
                 Counter::<$type>::pre_decrement(self)
             }
 
             #[doc = "Decrements and returns the value prior to decrementation."]
-            #[inline]
-            fn decrement(&mut self) -> $type {
-                Counter::<$type>::decrement(self)
+            #[inline(always)]
+            fn post_decrement(&mut self) -> $type {
+                Counter::<$type>::post_decrement(self)
             }
         }
 
         impl Increment for $type {
             type Result = $type;
-            #[doc = "Increments and returns the result of incrementation."]
-            #[inline]
+
+            #[doc = "Increments the value."]
+            #[inline(always)]
+            fn increment(&mut self) {
+                *self += 1;
+            }
+
+            #[doc = "Pre-increments value before returning it."]
+            #[inline(always)]
             fn pre_increment(&mut self) -> $type {
                 *self += 1;
                 *self
             }
 
             #[doc = "Increments and returns the value prior to incrementation."]
-            #[inline]
-            fn increment(&mut self) -> $type {
+            #[inline(always)]
+            fn post_increment(&mut self) -> $type {
                 let result = *self;
                 *self += 1;
                 result
@@ -229,8 +265,14 @@ macro_rules! counter_impls {
 
         impl Decrement for $type {
             type Result = $type;
+            #[doc = "Decrements the value."]
+            #[inline(always)]
+            fn decrement(&mut self) {
+                *self -= 1;
+            }
+
             #[inline]
-            #[doc = "Decrements and returns the result of decrementation."]
+            #[doc = "Pre-decrements value before returning it."]
             fn pre_decrement(&mut self) -> $type {
                 *self -= 1;
                 *self
@@ -238,7 +280,7 @@ macro_rules! counter_impls {
 
             #[doc = "Decrements and returns the value prior to decrementation."]
             #[inline]
-            fn decrement(&mut self) -> $type {
+            fn post_decrement(&mut self) -> $type {
                 let result = *self;
                 *self -= 1;
                 result
@@ -271,12 +313,12 @@ mod tests {
     fn counter_tests() {
         let mut count = counter(0u32);
 
-        let value = count.increment();
+        let value = count.post_increment();
 
         assert_eq!(value, 0u32);
         assert_eq!(count, counter(1u32));
 
-        let value = count.decrement();
+        let value = count.post_decrement();
 
         assert_eq!(value, 1u32);
         assert_eq!(count, counter(0u32));
@@ -303,12 +345,12 @@ mod tests {
         assert_eq!(value, 0u32);
         assert_eq!(count, 0u32);
 
-        let value = count.increment();
+        let value = count.post_increment();
 
         assert_eq!(value, 0u32);
         assert_eq!(count, 1u32);
 
-        let value = count.decrement();
+        let value = count.post_decrement();
 
         assert_eq!(value, 1u32);
         assert_eq!(count, 0u32);
@@ -316,11 +358,11 @@ mod tests {
         let mut id = counter(0u32);
         
         let ids = [
-            id.increment(),
-            id.increment(),
-            id.increment(),
-            id.increment(),
-            id.increment(),
+            id.post_increment(),
+            id.post_increment(),
+            id.post_increment(),
+            id.post_increment(),
+            id.post_increment(),
         ];
 
         assert_eq!(ids, [0, 1, 2, 3, 4]);
