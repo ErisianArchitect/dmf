@@ -1,0 +1,10 @@
+[package]
+name = "dmf"
+authors = ["ErisianArchitect <https://github.com/erisianarchitect>"]
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rayon = "1.10.0"
+scopeguard = "1.2.0"
+thiserror = "2.0.12"
