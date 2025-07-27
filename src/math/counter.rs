@@ -271,15 +271,15 @@ macro_rules! counter_impls {
                 *self -= 1;
             }
 
-            #[inline]
             #[doc = "Pre-decrements value before returning it."]
+            #[inline(always)]
             fn pre_decrement(&mut self) -> $type {
                 *self -= 1;
                 *self
             }
 
             #[doc = "Decrements and returns the value prior to decrementation."]
-            #[inline]
+            #[inline(always)]
             fn post_decrement(&mut self) -> $type {
                 let result = *self;
                 *self -= 1;
@@ -288,14 +288,14 @@ macro_rules! counter_impls {
         }
 
         impl From<$type> for Counter<$type> {
-            #[inline]
+            #[inline(always)]
             fn from(value: $type) -> Self {
                 Self(value)
             }
         }
 
         impl From<Counter<$type>> for $type {
-            #[inline]
+            #[inline(always)]
             fn from(value: Counter<$type>) -> Self {
                 value.0
             }

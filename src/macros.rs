@@ -279,11 +279,167 @@ macro_rules! return_none {
     };
 }
 
-// TODO: continue_ok, continue_err, continue_some, continue_none, break_if, return_if, continue_if, do_while
+#[macro_export]
+macro_rules! continue_ok {
+    ($($label:lifetime)? $result:expr) => {
+        if ($result).is_ok() {
+            continue $($label)?;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! continue_err {
+    ($($label:lifetime)? $result:expr) => {
+        if ($result).is_err() {
+            continue $($label)?;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! continue_some {
+    ($($label:lifetime)? $result:expr) => {
+        if ($result).is_some() {
+            continue $($label)?;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! continue_none {
+    ($($label:lifetime)? $result:expr) => {
+        if ($result).is_none() {
+            continue $($label)?;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! break_if {
+    ($($label:lifetime)? $condition:expr $(, $value:expr)?) => {
+        if ($condition) {
+            break $($label)? $($value)?;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! return_if {
+    ($condition:expr $(, $value:expr)?) => {
+        if ($condition) {
+            return ($value);
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! continue_if {
+    ($($label:lifetime)? $condition:expr) => {
+        if ($condition) {
+            continue $($label)?;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! do_while {
+    ($($label:lifetime : )? do $do_block:block while $condition:expr $(; /* allow for trailing semi-colon */)?) => {
+        $($label : )? loop {
+            $do_block
+            if !($condition) {
+                break;
+            }
+        }
+    };
+}
+
+/// This macro is merely used in developer contexts where Rust-Analyzer or something similar can be used to
+/// hover the mouse over the given name in order to determine the size of the type.
+#[macro_export]
+macro_rules! type_size_hint {
+    ($anchor:ident for $type:ty) => {
+        // adding the const declaration inside of this const block prevents
+        // namespace pollution.
+        const _: () = {
+            #[allow(unused)]
+            #[allow(non_upper_case_globals)]
+            const $anchor: usize = std::mem::size_of::<$type>();
+        };
+    };
+    ($type_ident:ident) => {
+        $crate::type_size_hint!($type_ident for $type_ident);
+    };
+}
+
+#[macro_export]
+macro_rules! option_size_optimization {
+    ($anchor:ident for $type:ty) => {
+        // adding the const declaration inside of this const block prevents
+        // namespace pollution.
+        const _: () = {
+            #[allow(unused)]
+            #[allow(non_upper_case_globals)]
+            const $anchor: bool = std::mem::size_of::<$type>() == std::mem::size_of::<Option<$type>>();
+        };
+    };
+    ($type_ident:ident) => {
+        $crate::option_size_optimization!($type_ident for $type_ident);
+    };
+}
+
+#[inline(always)]
+const fn max_usize(lhs: usize, rhs: usize) -> usize {
+    if lhs >= rhs {
+        lhs
+    } else {
+        rhs
+    }
+}
+
+#[macro_export]
+macro_rules! result_size_optimization {
+    ($anchor:ident for $ok:ty, $err:ty) => {
+        // adding the const declaration inside of this const block prevents
+        // namespace pollution.
+        const _: () = {
+            #[allow(unused)]
+            #[allow(non_upper_case_globals)]
+            const $anchor: bool = max_usize(std::mem::size_of::<$ok>(), std::mem::size_of::<$err>()) <= std::mem::size_of::<Result<$ok, $err>>();
+        };
+    };
+}
+
+type_size_hint!(hint for Option<&str>);
+option_size_optimization!(hint for &str);
+result_size_optimization!(hint for &str, &str);
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
+    #[allow(unused)]
+    #[allow(non_upper_case_globals)]
+    const snake: usize = 1;
+
+    #[test]
+    fn do_while_test() {
+        let mut n = 0;
+        #[allow(unused_assignments)]
+        let mut assigned = false;
+        do_while!(
+            'test_loop: do {
+                assert_eq!(n, 0);
+                assigned = true;
+                n += 1;
+                if n == 3 {
+                    break 'test_loop;
+                }
+            } while n > 100;
+        );
+        assert_eq!(n, 1);
+        assert!(assigned);
+    }
     
     #[test]
     fn ret_ok_test() {

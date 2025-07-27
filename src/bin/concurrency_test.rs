@@ -17,8 +17,23 @@ pub fn fib(n: u64) -> u128 {
     }
 }
 
-pub fn main() {
+pub trait OptDrop {
+    fn drop(&mut self);
+}
 
+impl<T> OptDrop for Option<T> {
+    fn drop(&mut self) {
+        drop(self.take())
+    }
+}
+
+pub fn main() {
+    let div_val = 7.5_f64;
+    let div_val_recip = div_val.recip();
+    println!("{}, {}", 15.0 / div_val, 15.0 * div_val_recip);
+    return;
+    let mut some = Some("hello, world");
+    some.drop();
     println!("Spawning worker.");
     let start_time = Instant::now();
     let pending = Pending::spawn(|| {
@@ -40,4 +55,9 @@ pub fn main() {
         std::thread::sleep(Duration::from_millis(50));
     };
     println!("Result: {result:?}");
+
+    let elapsed = dmf::time::time_it(|| {
+        std::thread::sleep(Duration::from_millis(500));
+    }).elapsed;
+    println!("time_it time: {elapsed:?}");
 }

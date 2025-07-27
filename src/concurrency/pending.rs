@@ -83,8 +83,7 @@ impl<R> Inner<R> {
     }
 
     /// This function should only ever be called on the last instance.
-    unsafe fn drop_and_dealloc(raw: NonNull<Self>) {
-        let mut raw = raw;
+    unsafe fn drop_and_dealloc(mut raw: NonNull<Self>) {
         unsafe  {
             let inner_mut = raw.as_mut();
             let state = inner_mut.state.load(Ordering::Acquire);
@@ -104,13 +103,20 @@ impl<R> Inner<R> {
     }
 }
 
+#[derive(Debug)]
 pub struct Pending<R: Send + 'static> {
     raw: NonNull<Inner<R>>,
 }
 
+#[derive(Debug)]
 pub struct Responder<R: Send + 'static> {
     raw: NonNull<Inner<R>>,
 }
+
+unsafe impl<R> Send for Pending<R>
+where R: Send + 'static {}
+unsafe impl<R> Sync for Pending<R>
+where R: Send + Sync + 'static {}
 
 unsafe impl<R> Send for Responder<R>
 where R: Send + 'static {}
