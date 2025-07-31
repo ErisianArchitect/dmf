@@ -6,3 +6,5 @@ mod replace_ext;
 pub use replace_ext::*;
 mod result_ext;
 pub use result_ext::*;
+mod tuple_ext;
+pub use tuple_ext::*;

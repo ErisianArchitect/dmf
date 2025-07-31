@@ -1,5 +1,58 @@
 use std::collections::HashSet;
 
+/// This function expects that `s` is a non-empty string.
+/// It does not check for you, you will have to do that check yourself.
+const fn next_char_with_len(s: &str) -> (char, u32) {
+    let bytes = s.as_bytes();
+    let first = bytes[0];
+    match first.leading_ones() {
+        // 1 byte
+        0 => {
+            let codepoint = first & 0b01111111;
+            let chr = unsafe {
+                char::from_u32_unchecked(codepoint as u32)
+            };
+            (chr, 1)
+        }
+        // 2 bytes
+        2 => {
+            let mut codepoint = ((first & 0b00011111) as u32) << 6;
+            let second = bytes[1];
+            codepoint |= (second & 0b00111111) as u32;
+            let chr = unsafe {
+                char::from_u32_unchecked(codepoint)
+            };
+            (chr, 2)
+        }
+        // 3 bytes
+        3 => {
+            let mut codepoint = ((first & 0b00001111) as u32) << 6;
+            let second = bytes[1];
+            codepoint = (codepoint | (second & 0b00111111) as u32) << 6;
+            let third = bytes[2];
+            codepoint = codepoint | (third & 0b00111111) as u32;
+            let chr = unsafe {
+                char::from_u32_unchecked(codepoint)
+            };
+            (chr, 3)
+        }
+        // 4 bytes
+        4 => {
+            let mut codepoint = ((first & 0b00000111) as u32) << 6;
+            let second = bytes[1];
+            codepoint = (codepoint | (second & 0b00111111) as u32) << 6;
+            let third = bytes[2];
+            codepoint = (codepoint | (third & 0b00111111) as u32) << 6;
+            let fourth = bytes[3];
+            codepoint = codepoint | (fourth & 0b00111111) as u32;
+            let chr = unsafe {
+                char::from_u32_unchecked(codepoint)
+            };
+            (chr, 4)
+        }
+        _ => unreachable!(),
+    }
+}
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -16,6 +69,8 @@ pub enum MatchStatus {
     /// [MatchStatus::Continue] => Failure
     /// [MatchStatus::ContinueSuccess] => Success
     End = 4,
+    /// Matching ended successfully, but the last character should be ignored.
+    EndSuccess = 5,
 }
 
 impl MatchStatus {
@@ -28,6 +83,7 @@ impl MatchStatus {
             Self::Success => "Success",
             Self::Failure => "Failure",
             Self::End => "End",
+            Self::EndSuccess => "EndSuccess",
         }
     }
 }
@@ -49,6 +105,7 @@ impl ValidState {
             MatchStatus::Success => Self::Valid,
             MatchStatus::Failure => Self::Invalid,
             MatchStatus::End => return,
+            MatchStatus::EndSuccess => Self::Valid,
         };
     }
 }
@@ -96,15 +153,43 @@ impl<'a> Parser<'a> {
     /// Returns None on end-of-file.
     #[inline]
     pub fn peek(&self) -> Option<char> {
-        self.source[self.cursor..].chars().next()
+        if self.at_end() {
+            return None;
+        }
+        let (next, _) = next_char_with_len(&self.source[self.cursor..]);
+        Some(next)
+    }
+    
+    /// Peeks the next character in the stream and returns that char as well as the utf-8 encoding length that can be used to advance the cursor.
+    #[inline]
+    pub fn peek_with_len(&self) -> Option<(char, u32)> {
+        if self.at_end() {
+            return None;
+        }
+        let result = next_char_with_len(&self.source[self.cursor..]);
+        Some(result)
     }
 
     /// Returns None on end-of-file.
     #[inline]
     pub fn next(&mut self) -> Option<char> {
-        let next = self.source[self.cursor..].chars().next()?;
-        self.cursor += next.len_utf8();
+        if self.at_end() {
+            return None;
+        }
+        let (next, len) = next_char_with_len(&self.source[self.cursor..]);
+        self.cursor += len as usize;
         Some(next)
+    }
+
+    /// Gets the next character in the stream and returns that char as well as the utf-8 encoding length that can be used to advance the cursor.
+    #[inline]
+    pub fn next_with_len(&mut self) -> Option<(char, u32)> {
+        if self.at_end() {
+            return None;
+        }
+        let (next, len) = next_char_with_len(&self.source[self.cursor..]);
+        self.cursor += len as usize;
+        Some((next, len))
     }
 
     #[inline]
@@ -115,13 +200,7 @@ impl<'a> Parser<'a> {
     /// Returns false if end-of-file.
     #[inline]
     pub fn advance1(&mut self) -> bool {
-        match self.source[self.cursor..].chars().next() {
-            Some(next) => {
-                self.cursor += next.len_utf8();
-                true
-            },
-            None => false,
-        }
+        self.next().is_some()
     }
 
     /// Advance the parser by `len` characters, and returns the number of characters advanced. (not bytes!).
@@ -132,21 +211,12 @@ impl<'a> Parser<'a> {
                 return index;
             }
         }
-        return len;
-    }
-
-    /// Advances the cursor by `advance` bytes.
-    #[inline]
-    pub fn advance_cursor(&mut self, advance: usize) -> usize {
-        let next_pos = self.source.len().min(self.cursor + advance);
-        let count = next_pos - self.cursor;
-        self.cursor = next_pos;
-        count
+        len
     }
 
     /// Consumes a single character if it is matched by the matcher function.
     pub fn match_char_fn<F: FnOnce(char) -> bool>(&mut self, matcher: F) -> Option<char> {
-        let next = self.source[self.cursor..].chars().next()?;
+        let next = self.next()?;
         if matcher(next) {
             self.cursor += next.len_utf8();
             Some(next)
@@ -165,25 +235,25 @@ impl<'a> Parser<'a> {
         let mut validation = ValidState::Init;
         let mut fork = self.fork();
         loop {
-            let Some(peek) = fork.peek() else {
-                match validation {
-                    ValidState::Init => return None,
+            let Some((peek, peek_len)) = fork.peek_with_len() else {
+                return match validation {
+                    ValidState::Init => None,
                     ValidState::Valid => {
                         self.merge(fork);
-                        return Some(fork.substr_from_span());
+                        Some(fork.substr_from_span())
                     },
                     ValidState::Invalid => {
-                        return None;
+                        None
                     },
                 }
             };
             match matcher(peek) {
                 cont @ (MatchStatus::Continue | MatchStatus::ContinueSuccess) => {
                     validation.validate(cont);
-                    fork.cursor += peek.len_utf8();
+                    fork.cursor += peek_len as usize;
                 },
                 MatchStatus::Success => {
-                    fork.cursor += peek.len_utf8();
+                    fork.cursor += peek_len as usize;
                     self.merge(fork);
                     return Some(fork.substr_from_span());
                 },
@@ -196,6 +266,10 @@ impl<'a> Parser<'a> {
                             return Some(fork.substr_from_span());
                         },
                     }
+                }
+                MatchStatus::EndSuccess => {
+                    self.merge(fork);
+                    return Some(fork.substr_from_span());
                 }
             }
         }
@@ -253,6 +327,9 @@ impl<'a> Parser<'a> {
         fork.match_exact_char(exact)
     }
 
+    /// A forked parser can be used to do speculative parsing from the current point in the stream.
+    /// The new parser will have the same source, the same cursor position, but the start will be set to the current cursor
+    /// position.
     pub fn fork(&self) -> Parser<'a> {
         Parser { source: self.source, cursor: self.cursor, start: self.cursor }
     }
@@ -265,10 +342,16 @@ impl<'a> Parser<'a> {
     }
 
     #[inline(always)]
+    pub fn substr_to_start(&self) -> &'a str {
+        &self.source[..self.start]
+    }
+
+    #[inline(always)]
     pub fn substr_to_cursor(&self) -> &'a str {
         &self.source[..self.cursor]
     }
 
+    /// Gets the sub-string from `self.start()..self.cursor()`.
     #[inline(always)]
     pub fn substr_from_span(&self) -> &'a str {
         &self.source[self.span()]
@@ -332,6 +415,22 @@ pub fn parse_until<F: FnMut(char) -> bool>(mut until: F) -> impl FnMut(char) -> 
 
 #[must_use]
 #[inline(always)]
+pub fn match_exact(to_match: &str) -> impl FnMut(char) -> MatchStatus {
+    let mut chars = to_match.chars();
+    move |c| {
+        match chars.next() {
+            Some(next) => if next == c {
+                MatchStatus::Continue
+            } else {
+                MatchStatus::Failure
+            },
+            None => MatchStatus::EndSuccess,
+        }
+    }
+}
+
+#[must_use]
+#[inline(always)]
 pub fn match_char(to_match: char) -> impl Fn(char) -> MatchStatus {
     move |c| {
         if c == to_match {
@@ -387,6 +486,8 @@ pub fn singleline_str_literal_matcher() -> impl FnMut(char) -> MatchStatus {
                 skip1 = true;
                 MatchStatus::Continue
             }
+            // Failure on new-line since this is for single-line strings.
+            '\n' => MatchStatus::Failure,
             '"' => MatchStatus::Success,
             _ => MatchStatus::Continue,
         }
@@ -410,32 +511,24 @@ mod tests {
         let source = "  \t\t\n1234";
         let parser = Parser::new(source);
         let peeked = parser.peek_str_fn(parse_while(|c| c.is_whitespace()));
-        if let Some(match_str) = peeked {
-            assert_eq!(match_str, "  \t\t\n");
-        } else {
-            panic!("No match.");
-        }
+        assert_eq!(peeked, Some("  \t\t\n"));
         let source = "Hello, world!";
         let parser = Parser::new(source);
         let peeked = parser.peek_str_fn(parse_until(|c| c == '!'));
-        if let Some(match_str) = peeked {
-            assert_eq!(match_str, "Hello, world");
-        } else {
-            panic!("No match!");
-        }
+        assert_eq!(peeked, Some("Hello, world"));
         let parser = Parser::new("foo");
         assert!(parser.peek_str_fn(match_char('f')).is_some());
         assert!(parser.peek_str_fn(match_char('x')).is_none());
         assert!(parser.peek_exact_char('f'));
         let source = r#""Hello, \"world\"!", this is a test."#;
-        if let Some(string_lit) = match_singleline_str_literal(source) {
-            assert_eq!(string_lit, r#""Hello, \"world\"!""#);
-        } else {
-            panic!("Failed to match string literal.");
-        }
-
+        let expected = r#""Hello, \"world\"!""#;
+        assert_eq!(match_singleline_str_literal(source), Some(expected));
         assert_eq!(match_singleline_str_literal("not a string literal"), None);
         assert_eq!(match_singleline_str_literal("\"not a complete string literal"), None);
         assert_eq!(match_singleline_str_literal("not a string literal\""), None);
+
+        let parser = Parser::new("hello, world");
+        let hello = "hello";
+        assert_eq!(parser.peek_str_fn(match_exact(hello)), Some(hello))
     }
 }

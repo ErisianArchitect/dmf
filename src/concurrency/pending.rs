@@ -36,10 +36,10 @@ const READY: u8 = 4;
 pub enum PendingError {
     #[error("Value already taken.")]
     Taken,
-    #[error("Assigning value.")]
-    Assigning,
     #[error("Waiting for value.")]
     Waiting,
+    #[error("Assigning value.")]
+    Assigning,
     #[error("Unknown state: {0}")]
     UnknownState(u8),
 }

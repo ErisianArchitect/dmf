@@ -328,7 +328,7 @@ macro_rules! break_if {
 macro_rules! return_if {
     ($condition:expr $(, $value:expr)?) => {
         if ($condition) {
-            return ($value);
+            return $($value)?;
         }
     };
 }
@@ -388,15 +388,11 @@ macro_rules! option_size_optimization {
     };
 }
 
-#[inline(always)]
-const fn max_usize(lhs: usize, rhs: usize) -> usize {
-    if lhs >= rhs {
-        lhs
-    } else {
-        rhs
-    }
-}
-
+/// # Example:
+/// ```rust, ignore
+///            // hover over `hint` with mouse in IDE to view result.
+/// result_size_optimization!(hint for &str, &str);
+/// ```
 #[macro_export]
 macro_rules! result_size_optimization {
     ($anchor:ident for $ok:ty, $err:ty) => {
@@ -405,14 +401,175 @@ macro_rules! result_size_optimization {
         const _: () = {
             #[allow(unused)]
             #[allow(non_upper_case_globals)]
-            const $anchor: bool = max_usize(std::mem::size_of::<$ok>(), std::mem::size_of::<$err>()) <= std::mem::size_of::<Result<$ok, $err>>();
+            const $anchor: bool = $crate::functional::max_usize(std::mem::size_of::<$ok>(), std::mem::size_of::<$err>()) == std::mem::size_of::<Result<$ok, $err>>();
         };
     };
 }
 
-type_size_hint!(hint for Option<&str>);
-option_size_optimization!(hint for &str);
-result_size_optimization!(hint for &str, &str);
+#[macro_export]
+macro_rules! select {
+    (false, $true:expr, $false:expr$(,)?) => {
+        $false
+    };
+    (const: false, $true:expr, $false:expr $(,)?) => {
+        const { $false }
+    };
+    (true, $true:expr, $false:expr$(,)?) => {
+        $true
+    };
+    (const: true, $true:expr, $false:expr$(,)?) => {
+        const { $true }
+    };
+    ($condition:expr, $true:expr, $false:expr$(,)?) => {
+        if $condition {
+            $true
+        } else {
+            $false
+        }
+    };
+    (const: $condition:expr, $true:expr, $false:expr$(,)?) => {
+        const {
+            if $condition {
+                $true
+            } else {
+                $false
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! min {
+    ($a:expr, $b:expr$(,)?) => {
+        {
+            let a = $a;
+            let b = $b;
+            $crate::select!(
+                a <= b,
+                a, b
+            )
+        }
+    };
+    (const: $a:expr, $b:expr$(,)?) => {
+        const {
+            let a = $a;
+            let b = $b;
+            $crate::select!(
+                a <= b,
+                a, b
+            )
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! max {
+    ($a:expr, $b:expr$(,)?) => {
+        {
+            let a = $a;
+            let b = $b;
+            $crate::select!(
+                a >= b,
+                a, b
+            )
+        }
+    };
+    (const: $a:expr, $b:expr$(,)?) => {
+        const {
+            let a = $a;
+            let b = $b;
+            $crate::select!(
+                a >= b,
+                a, b
+            )
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! min_max {
+    ($a:expr, $b:expr$(,)?) => {
+        {
+            let a = $a;
+            let b = $b;
+            $crate::select!(
+                a <= b,
+                (a, b), (b, a)
+            )
+        }
+    };
+    (const: $a:expr, $b:expr$(,)?) => {
+        const {
+            let a = $a;
+            let b = $b;
+            $crate::select!(
+                a <= b,
+                (a, b), (b, a)
+            )
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! double {
+    ($a:expr$(,)?) => {
+        ($a) * (2 as _)
+    };
+    (const: $a:expr$(,)?) => {
+        const { $crate::double!($a) }
+    };
+}
+
+#[macro_export]
+macro_rules! triple {
+    ($a:expr$(,)?) => {
+        ($a) * (3 as _)
+    };
+    (const: $a:expr$(,)?) => {
+        const { $crate::triple!($a) }
+    };
+}
+
+#[macro_export]
+macro_rules! quadruple {
+    ($a:expr$(,)?) => {
+        ($a) * (4 as _)
+    };
+    (const: $a:expr$(,)?) => {
+        const { $crate::quadruple!($a) }
+    };
+}
+
+/// Used for floating point numbers, either f32 or f64.
+#[macro_export]
+macro_rules! half {
+    ($a:expr$(,)?) => {
+        ($a) * 0.5
+    };
+    (const: $a:expr$(,)?) => {
+        const { $crate::half!($a) }
+    };
+}
+
+#[macro_export]
+macro_rules! quarter {
+    ($a:expr$(,)?) => {
+        ($a) * 0.25
+    };
+    (const: $a:expr$(,)?) => {
+        const { $crate::quarter!($a) }
+    };
+}
+
+#[macro_export]
+macro_rules! tenth {
+    ($a:expr$(,)?) => {
+        ($a) * 0.1
+    };
+    (const: $a:expr$(,)?) => {
+        const { $crate::tenth!($a) }
+    };
+}
 
 #[cfg(test)]
 mod tests {

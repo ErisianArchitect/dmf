@@ -8,6 +8,7 @@ pub mod util;
 pub mod functional;
 pub use functional::*;
 pub mod macros;
+pub mod typing;
 
 
 

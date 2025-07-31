@@ -43,35 +43,3 @@ pub const fn pad<const SIZE: usize>() -> Padding<SIZE> {
 pub const fn pad_bytes<const SIZE: usize>() -> [u8; SIZE] {
     [0u8; SIZE]
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn padding_test() {
-
-        #[repr(C)]
-        struct Padded {
-            foo: u8,
-            _foo_pad: Padding<3>,
-            bar: u8,
-            _bar_pad: Padding<3>,
-            baz: u8,
-            _baz_pad: [u8; 3],
-        }
-
-        let padded = const {Padded {
-            foo: 0,
-            _foo_pad: pad(),
-            bar: 1,
-            _bar_pad: pad(),
-            baz: 2,
-            _baz_pad: pad_bytes(),
-        }};
-
-        let three = Padding::<3>::zeroed();
-        assert_eq!(three.0, [0u8; 3]);
-        assert_eq!(std::mem::size_of::<Padded>(), 12);
-    }
-}

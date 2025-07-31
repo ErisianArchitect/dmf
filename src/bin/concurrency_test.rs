@@ -28,12 +28,6 @@ impl<T> OptDrop for Option<T> {
 }
 
 pub fn main() {
-    let div_val = 7.5_f64;
-    let div_val_recip = div_val.recip();
-    println!("{}, {}", 15.0 / div_val, 15.0 * div_val_recip);
-    return;
-    let mut some = Some("hello, world");
-    some.drop();
     println!("Spawning worker.");
     let start_time = Instant::now();
     let pending = Pending::spawn(|| {
