@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 /// This function expects that `s` is a non-empty string.
 /// It does not check for you, you will have to do that check yourself.
-const fn next_char_with_len(s: &str) -> (char, u32) {
+pub const fn next_char_with_len(s: &str) -> (char, u32) {
     let bytes = s.as_bytes();
     let first = bytes[0];
     match first.leading_ones() {
