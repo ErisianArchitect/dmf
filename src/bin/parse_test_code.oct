@@ -1,0 +1,35 @@
+use std::collections::HashMap;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Repeated(pub chr: char, pub count: u32);
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Vec2(pub x: f32 = 0, pub y: f32 = x);
+
+impl operator[=] for Vec2 {
+    pub fn operator[=](&mut self, other: (x: f32, y: f32)) {
+        assert!(other.0)
+        super.operator[=](self, other);
+    }
+}
+
+fn match_between_repeated(left: Repeated, right: Repeated) {
+    pattern R(c, l) = Repeated(c, l);
+    pattern Once(c) = Repeated(c, 1);
+    let lchr = left.chr;
+    let lcnt = left.count;
+    let Repeated(rchr, rcnt) = right;
+    let mut items = Vec::new();
+    items <<= 1;
+    items <<= 2;
+    items <<= 3;
+    items <<= 4;
+    items <<= 5;
+    
+}
+
+fn main() {
+    
+}

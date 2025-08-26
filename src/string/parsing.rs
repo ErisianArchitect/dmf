@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, ops::Range};
 
 /// This function expects that `s` is a non-empty string.
 /// It does not check for you, you will have to do that check yourself.
@@ -65,7 +65,7 @@ pub enum MatchStatus {
     Success = 2,
     /// Matching was a total failure.
     Failure = 3,
-    /// Matching ended, and success is determined by the previous [MatchStatus]:
+    /// Matching ended, and success is determined by the previous [MatchStatus] (the last character is ignored):
     /// [MatchStatus::Continue] => Failure
     /// [MatchStatus::ContinueSuccess] => Success
     End = 4,
@@ -79,7 +79,7 @@ impl MatchStatus {
     pub const fn text(self) -> &'static str {
         match self {
             Self::Continue => "Continue",
-            Self::ContinueSuccess => "ContinueValid",
+            Self::ContinueSuccess => "ContinueSuccess",
             Self::Success => "Success",
             Self::Failure => "Failure",
             Self::End => "End",
@@ -141,8 +141,8 @@ impl<'a> std::cmp::PartialEq<Parser<'a>> for Parser<'a> {
 impl<'a> std::cmp::Eq for Parser<'a> {}
 
 impl<'a> Parser<'a> {
-    #[inline]
-    pub fn new(source: &'a str) -> Self {
+    #[inline(always)]
+    pub const fn new(source: &'a str) -> Self {
         Self {
             source,
             start: 0,
@@ -169,6 +169,34 @@ impl<'a> Parser<'a> {
         let result = next_char_with_len(&self.source[self.cursor..]);
         Some(result)
     }
+    
+    #[inline]
+    pub fn peek2(&self) -> Option<char> {
+        if self.at_end() {
+            return None;
+        }
+        let (_, len) = next_char_with_len(&self.source[self.cursor..]);
+        if self.at_end() {
+            return None;
+        }
+        let (resc, _) = next_char_with_len(&self.source[self.cursor + len as usize..]);
+        Some(resc)
+    }
+    
+    /// Peeks the character after the next in the stream and returns the char with the
+    /// length of the stream needed to advance past both chars.
+    #[inline]
+    pub fn peek2_with_len(&self) -> Option<(char, u32)> {
+        if self.at_end() {
+            return None;
+        }
+        let (_, len) = next_char_with_len(&self.source[self.cursor..]);
+        if self.at_end() {
+            return None;
+        }
+        let (resc, rlen) = next_char_with_len(&self.source[self.cursor + len as usize..]);
+        Some((resc, len + rlen))
+    }
 
     /// Returns None on end-of-file.
     #[inline]
@@ -192,15 +220,24 @@ impl<'a> Parser<'a> {
         Some((next, len))
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn same_source(&self, other: &Self) -> bool {
         std::ptr::eq(self.source, other.source)
     }
 
     /// Returns false if end-of-file.
-    #[inline]
+    #[inline(always)]
     pub fn advance1(&mut self) -> bool {
         self.next().is_some()
+    }
+    
+    #[inline(always)]
+    pub fn advance2(&mut self) -> usize {
+        if self.next().is_some() {
+            1 + (self.next().is_some() as usize)
+        } else {
+            0
+        }
     }
 
     /// Advance the parser by `len` characters, and returns the number of characters advanced. (not bytes!).
@@ -215,6 +252,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Consumes a single character if it is matched by the matcher function.
+    #[inline]
     pub fn match_char_fn<F: FnOnce(char) -> bool>(&mut self, matcher: F) -> Option<char> {
         let next = self.next()?;
         if matcher(next) {
@@ -231,20 +269,17 @@ impl<'a> Parser<'a> {
         fork.match_char_fn(matcher)
     }
 
-    pub fn match_str_fn<F: FnMut(char) -> MatchStatus>(&mut self, mut matcher: F) -> Option<&'a str> {
+    pub fn match_str_fn<F: FnMut(char) -> MatchStatus>(&mut self, mut matcher: F) -> Option<(&'a str, Range<usize>)> {
         let mut validation = ValidState::Init;
         let mut fork = self.fork();
         loop {
             let Some((peek, peek_len)) = fork.peek_with_len() else {
-                return match validation {
-                    ValidState::Init => None,
+                match validation {
                     ValidState::Valid => {
                         self.merge(fork);
-                        Some(fork.substr_from_span())
+                        return Some((fork.substr_from_span(), fork.span()));
                     },
-                    ValidState::Invalid => {
-                        None
-                    },
+                    _ => return None,
                 }
             };
             match matcher(peek) {
@@ -255,32 +290,81 @@ impl<'a> Parser<'a> {
                 MatchStatus::Success => {
                     fork.cursor += peek_len as usize;
                     self.merge(fork);
-                    return Some(fork.substr_from_span());
+                    return Some((fork.substr_from_span(), fork.span()));
                 },
                 MatchStatus::Failure =>  return None,
                 MatchStatus::End => {
                     match validation {
-                        ValidState::Init | ValidState::Invalid => return None,
                         ValidState::Valid => {
                             self.merge(fork);
-                            return Some(fork.substr_from_span());
+                            return Some((fork.substr_from_span(), fork.span()));
                         },
+                        _ => return None,
                     }
                 }
                 MatchStatus::EndSuccess => {
                     self.merge(fork);
-                    return Some(fork.substr_from_span());
+                    return Some((fork.substr_from_span(), fork.span()));
                 }
             }
         }
     }
 
-    pub fn peek_str_fn<F: FnMut(char) -> MatchStatus>(&self, matcher: F) -> Option<&'a str> {
+    #[inline(always)]
+    pub fn peek_str_fn<F: FnMut(char) -> MatchStatus>(&self, matcher: F) -> Option<(&'a str, Range<usize>)> {
         let mut fork = self.fork();
         fork.match_str_fn(matcher)
     }
+    
+    pub fn match_newline(&mut self) -> Option<(&'a str, Range<usize>)> {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Stages {
+            Begin,
+            ReadCr,
+        }
+        let mut stage = Stages::Begin;
+        {
+            let stage = &mut stage;
+            self.match_str_fn(move |chr| {
+                match chr {
+                    '\n' => {
+                        MatchStatus::Success
+                    }
+                    '\r' => match *stage {
+                        Stages::Begin => {
+                            *stage = Stages::ReadCr;
+                            MatchStatus::ContinueSuccess
+                        }
+                        Stages::ReadCr => {
+                            MatchStatus::EndSuccess
+                        }
+                    }
+                    _ => match *stage {
+                        Stages::Begin => MatchStatus::Failure,
+                        Stages::ReadCr => MatchStatus::EndSuccess,
+                    }
+                }
+            })
+        }
+    }
+    
+    pub fn peek_newline(&self) -> Option<(&'a str, Range<usize>)> {
+        let mut fork = self.fork();
+        fork.match_newline()
+    }
+    
+    #[inline(always)]
+    pub fn eat_whitespace(&mut self) -> Option<(&'a str, Range<usize>)> {
+        self.match_str_fn(whitespace)
+    }
+    
+    #[inline(always)]
+    pub fn match_ascii_ident(&mut self) -> Option<(&'a str, Range<usize>)> {
+        self.match_str_fn(ascii_ident())
+    }
 
     /// Attempts to match the exact string, and if the match succeeds, advances the parser past the match.
+    #[inline]
     pub fn match_exact(&mut self, exact: &str) -> bool {
         if self.source[self.cursor..].starts_with(exact) {
             self.cursor += exact.len();
@@ -290,28 +374,38 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[inline(always)]
     pub fn peek_exact(&self, exact: &str) -> bool {
         let mut fork = self.fork();
         fork.match_exact(exact)
     }
 
     /// This will return an empty string if the callback returns `true` right away.
-    pub fn match_until<F: FnMut(char) -> bool>(&mut self, until: F) -> &'a str {
+    #[inline]
+    pub fn match_until<F: FnMut(char) -> bool>(&mut self, until: F) -> (&'a str, Range<usize>) {
         // fork the parser so that we can create a substring from the resulting span.
-        let mut fork = self.fork();
-        fork.match_str_fn(parse_until(until));
-        let result = fork.substr_from_span();
-        // Merge the fork back into self to advance the cursor.
-        self.merge(fork);
-        result
+        self.match_str_fn(parse_until(until)).unwrap()
     }
-
-    pub fn peek_until<F: FnMut(char) -> bool>(&mut self, until: F) -> &'a str {
+    
+    #[inline]
+    pub fn match_while<F: FnMut(char) -> bool>(&mut self, while_: F) -> (&'a str, Range<usize>) {
+        self.match_str_fn(parse_while(while_)).unwrap()
+    }
+    
+    #[inline(always)]
+    pub fn peek_until<F: FnMut(char) -> bool>(&mut self, until: F) -> (&'a str, Range<usize>) {
         let mut fork = self.fork();
         fork.match_until(until)
     }
+    
+    #[inline(always)]
+    pub fn peek_while<F: FnMut(char) -> bool>(&mut self, while_: F) -> (&'a str, Range<usize>) {
+        let mut fork = self.fork();
+        fork.match_while(while_)
+    }
 
     /// Attemps to match a single character, and if the match succeeds, advances the parser past the match.
+    #[inline]
     pub fn match_exact_char(&mut self, exact: char) -> bool {
         if let Some(peek) = self.peek()
         && peek == exact {
@@ -321,7 +415,8 @@ impl<'a> Parser<'a> {
             false
         }
     }
-
+    
+    #[inline]
     pub fn peek_exact_char(&self, exact: char) -> bool {
         let mut fork = self.fork();
         fork.match_exact_char(exact)
@@ -330,12 +425,14 @@ impl<'a> Parser<'a> {
     /// A forked parser can be used to do speculative parsing from the current point in the stream.
     /// The new parser will have the same source, the same cursor position, but the start will be set to the current cursor
     /// position.
+    #[inline(always)]
     pub fn fork(&self) -> Parser<'a> {
         Parser { source: self.source, cursor: self.cursor, start: self.cursor }
     }
 
     /// The fork must have been created from the same source, and the cursor must be at or ahead of the current cursor.
     /// If these conditions are not met, it results in a panic in debug builds.
+    #[inline(always)]
     pub fn merge(&mut self, fork: Parser<'_>) {
         debug_assert!(std::ptr::eq(self.source, fork.source) && fork.cursor >= self.cursor);
         self.cursor = fork.cursor;
@@ -379,7 +476,7 @@ impl<'a> Parser<'a> {
     }
 
     #[inline(always)]
-    pub fn at_end(&self) -> bool {
+    pub const fn at_end(&self) -> bool {
         self.cursor == self.source.len()
     }
 
@@ -389,12 +486,14 @@ impl<'a> Parser<'a> {
     }
 }
 
+#[must_use]
+#[inline(always)]
 pub fn parse_while<F: FnMut(char) -> bool>(mut matcher: F) -> impl FnMut(char) -> MatchStatus {
     move |c| {
         if matcher(c) {
             MatchStatus::ContinueSuccess
         } else {
-            MatchStatus::End
+            MatchStatus::EndSuccess
         }
     }
 }
@@ -406,7 +505,7 @@ pub fn parse_while<F: FnMut(char) -> bool>(mut matcher: F) -> impl FnMut(char) -
 pub fn parse_until<F: FnMut(char) -> bool>(mut until: F) -> impl FnMut(char) -> MatchStatus {
     move |c| {
         if until(c) {
-            MatchStatus::End
+            MatchStatus::EndSuccess
         } else {
             MatchStatus::ContinueSuccess
         }
@@ -465,6 +564,36 @@ pub fn match_from_set(chars: &HashSet<char>) -> impl Fn(char) -> MatchStatus {
     }
 }
 
+#[inline(always)]
+pub fn whitespace(c: char) -> MatchStatus {
+    if c.is_whitespace() {
+        MatchStatus::ContinueSuccess
+    } else {
+        MatchStatus::End
+    }
+}
+
+#[inline]
+pub fn ascii_ident() -> impl FnMut(char) -> MatchStatus {
+    let mut first = true;
+    move |c| {
+        match c {
+            '_'
+            | 'a'..='z'
+            | 'A'..='Z' => {
+                first = false;
+                MatchStatus::ContinueSuccess
+            }
+            '0'..='9' => if first {
+                MatchStatus::Failure
+            } else {
+                MatchStatus::ContinueSuccess
+            }
+            _ => MatchStatus::End
+        }
+    }
+}
+
 pub fn singleline_str_literal_matcher() -> impl FnMut(char) -> MatchStatus {
     let mut first = true;
     let mut skip1 = false;
@@ -494,9 +623,75 @@ pub fn singleline_str_literal_matcher() -> impl FnMut(char) -> MatchStatus {
     }
 }
 
+pub struct Repeated {
+    chr: char,
+    count: u32,
+}
+
+impl Repeated {
+    pub const fn new(chr: char, count: u32) -> Self {
+        Self {
+            chr,
+            count,
+        }
+    }
+}
+
+pub fn match_between_repeated(left: Repeated, right: Repeated) -> impl FnMut(char) -> MatchStatus {
+    struct CharCounter {
+        chr: char,
+        count: u32,
+        success: u32,
+    }
+    impl CharCounter {
+        #[inline(always)]
+        fn new(chr: char, success: u32) -> Self {
+            Self {
+                chr,
+                count: 0,
+                success,
+            }
+        }
+        
+        #[inline(always)]
+        fn done(&self) -> bool {
+            self.count == self.success
+        }
+        
+        #[inline(always)]
+        fn count(&mut self, chr: char) -> bool {
+            self.count = if chr == self.chr {
+                self.count + 1
+            } else {
+                0
+            };
+            self.done()
+        }
+    }
+    let mut left_counter = CharCounter::new(left.chr, left.count);
+    let mut right_counter = CharCounter::new(right.chr, right.count);
+    let mut first_chr = true;
+    move |chr| -> MatchStatus {
+        if first_chr || !left_counter.done() {
+            first_chr = false;
+            if left_counter.count(chr) || left_counter.count > 0 {
+                MatchStatus::Continue
+            } else {
+                MatchStatus::Failure
+            }
+        } else {
+            if right_counter.count(chr) {
+                MatchStatus::Success
+            } else {
+                MatchStatus::Continue
+            }
+        }
+    }
+}
+
 #[must_use]
 #[inline(always)]
-pub fn match_singleline_str_literal(source: &str) -> Option<&str> {
+pub fn match_singleline_str_literal(source: &str) -> Option<(&str, Range<usize>)> {
     let mut parser = Parser::new(source);
     parser.match_str_fn(singleline_str_literal_matcher())
 }
@@ -511,24 +706,37 @@ mod tests {
         let source = "  \t\t\n1234";
         let parser = Parser::new(source);
         let peeked = parser.peek_str_fn(parse_while(|c| c.is_whitespace()));
-        assert_eq!(peeked, Some("  \t\t\n"));
+        assert!(matches!(peeked, Some(("  \t\t\n", _))));
         let source = "Hello, world!";
         let parser = Parser::new(source);
         let peeked = parser.peek_str_fn(parse_until(|c| c == '!'));
-        assert_eq!(peeked, Some("Hello, world"));
+        assert!(matches!(peeked, Some(("Hello, world", _))));
         let parser = Parser::new("foo");
         assert!(parser.peek_str_fn(match_char('f')).is_some());
         assert!(parser.peek_str_fn(match_char('x')).is_none());
         assert!(parser.peek_exact_char('f'));
         let source = r#""Hello, \"world\"!", this is a test."#;
         let expected = r#""Hello, \"world\"!""#;
-        assert_eq!(match_singleline_str_literal(source), Some(expected));
+        assert_eq!(match_singleline_str_literal(source), Some((expected, 0..expected.len())));
         assert_eq!(match_singleline_str_literal("not a string literal"), None);
         assert_eq!(match_singleline_str_literal("\"not a complete string literal"), None);
         assert_eq!(match_singleline_str_literal("not a string literal\""), None);
 
         let parser = Parser::new("hello, world");
         let hello = "hello";
-        assert_eq!(parser.peek_str_fn(match_exact(hello)), Some(hello))
+        assert_eq!(
+            parser.peek_str_fn(match_exact(hello)),
+            Some((hello, 0..hello.len()))
+        );
+        
+        let parser = Parser::new("```this is a test.``` end");
+        let inbetween = "```this is a test.```";
+        assert_eq!(
+            parser.peek_str_fn(match_between_repeated(
+                Repeated::new('`', 3),
+                Repeated::new('`', 3),
+            )),
+            Some((inbetween, 0..inbetween.len()))
+        );
     }
 }
