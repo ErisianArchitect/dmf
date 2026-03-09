@@ -1,3 +1,29 @@
+// MIT License
+// 
+// Copyright (c) 2026-present github/ErisianArchitect
+// 
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#[derive(Debug, thiserror::Error)]
+#[error("Out of memory.")]
+pub struct OutOfMemoryError;
+
 use std::{
     alloc::{
         alloc, dealloc, Layout
@@ -5,7 +31,6 @@ use std::{
         MaybeUninit,
     }, ptr::NonNull, sync::atomic::{AtomicU8, Ordering}
 };
-use super::error::*;
 
 const TAKEN: u8 = 0;
 const WAITING: u8 = 1;
@@ -40,15 +65,14 @@ pub enum PendingError {
     Waiting,
     #[error("Assigning value.")]
     Assigning,
-    #[error("Unknown state: {0}")]
-    UnknownState(u8),
 }
 
+#[repr(C)]
 struct Inner<R> {
     // we only need AtomicU8 since there can only be one sender and one receiver.
+    result: UnsafeCell<MaybeUninit<R>>,
     ref_count: AtomicU8,
     state: AtomicU8,
-    result: UnsafeCell<MaybeUninit<R>>,
 }
 
 impl<R> Inner<R> {
@@ -56,18 +80,20 @@ impl<R> Inner<R> {
         Layout::new::<Self>()
     }
 
-    unsafe fn alloc_new() -> Result<NonNull<Inner<R>>> {
+    fn alloc_new() -> NonNull<Inner<R>> {
         unsafe {
             let layout = Self::layout();
             let ptr = alloc(layout) as *mut Self;
-            let raw = NonNull::new(ptr).ok_or_else(|| Error::OutOfMemory)?;
+            let Some(raw) = NonNull::new(ptr) else {
+                ::std::alloc::handle_alloc_error(Self::layout());
+            };
             raw.write(Self {
                 // initial reference count of 2 because there is one sender and one receiver.
                 ref_count: AtomicU8::new(2),
                 state: AtomicU8::new(WAITING),
                 result: UnsafeCell::new(MaybeUninit::uninit()),
             });
-            Ok(raw)
+            raw
         }
     }
 
@@ -132,14 +158,18 @@ impl<R: Send + 'static> Responder<R> {
 
     #[inline(always)]
     pub fn respond(self, result: R) {
+        // SAFETY: self.raw is guaranteed to be convertible to a reference.
+        let inner_ref = unsafe {
+            self.raw.as_ref()
+        };
+        // We use store because this is the only thing that can modify the value.
+        // The responder is the writer, and the `Pending` is the reader.
+        inner_ref.state.store(ASSIGNING, Ordering::Release);
+        // SAFETY: dst is guaranteed to be valid for writes, and is properly aligned.
         unsafe {
-            let inner_ref = self.raw.as_ref();
-            // We use store because this is the only thing that can modify the value.
-            // The responder is the writer, and the `Pending` is the reader.
-            inner_ref.state.store(ASSIGNING, Ordering::Release);
             inner_ref.result.get().write(MaybeUninit::new(result));
-            inner_ref.state.store(READY, Ordering::Release);
         }
+        inner_ref.state.store(READY, Ordering::Release);
     }
 }
 
@@ -154,9 +184,7 @@ impl<R: Send + 'static> Pending<R> {
     #[must_use]
     #[inline]
     pub fn pair() -> (Self, Responder<R>) {
-        let raw = unsafe {
-            Inner::<R>::alloc_new().expect("Out of memory.")
-        };
+        let raw = Inner::<R>::alloc_new();
         (
             Self::from_raw(raw),
             Responder::from_raw(raw)
@@ -167,7 +195,7 @@ impl<R: Send + 'static> Pending<R> {
     #[inline]
     pub fn spawn<F: FnOnce() -> R + Send + 'static>(worker: F) -> Self {
         let (pending, responder) = Self::pair();
-        rayon::spawn(move || {
+        rayon::spawn(#[inline(always)] move || {
             responder.respond(worker());
         });
         pending
@@ -191,7 +219,7 @@ impl<R: Send + 'static> Pending<R> {
                 Err(TAKEN) => Err(PendingError::Taken),
                 Err(WAITING) => Err(PendingError::Waiting),
                 Err(ASSIGNING) => Err(PendingError::Assigning),
-                Err(unknown) => Err(PendingError::UnknownState(unknown)),
+                Err(_) => unreachable!("Corrupted state; should not be possible."),
             }
         }
     }
@@ -223,4 +251,30 @@ pub fn pair<R: Send + 'static>() -> (Pending<R>, Responder<R>) {
 #[inline]
 pub fn spawn<R: Send + 'static, F: FnOnce() -> R + Send + 'static>(worker: F) -> Pending<R> {
     Pending::spawn(worker)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    
+    #[test]
+    fn pending_test() {
+        let pending = Pending::spawn(|| {
+            std::thread::sleep(Duration::from_secs(5));
+            "finished"
+        });
+        let start = std::time::Instant::now();
+        loop {
+            match pending.try_recv() {
+                Ok(result) => {
+                    assert!(start.elapsed().as_secs() > 3);
+                    assert_eq!(result, "finished");
+                    break;
+                },
+                Err(_) => std::thread::sleep(Duration::from_millis(500)),
+            }
+        }
+    }
 }

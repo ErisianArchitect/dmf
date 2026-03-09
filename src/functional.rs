@@ -44,6 +44,28 @@ pub fn select<T>(condition: bool, true_: T, false_: T) -> T {
 
 #[must_use]
 #[inline(always)]
+pub const fn const_select_ref<'a, const CONDITION: bool, T: ?Sized>(r#true: &'a T, r#false: &'a T) -> &'a T {
+    crate::select!(CONDITION, r#true, r#false)
+}
+
+#[must_use]
+#[inline(always)]
+pub const fn const_select_mut<'a, const CONDITION: bool, T: ?Sized>(r#true: &'a mut T, r#false: &'a mut T) -> &'a mut T {
+    crate::select!(CONDITION, r#true, r#false)
+}
+
+#[must_use]
+#[inline(always)]
+pub const fn const_cond_result<const CONDITION: bool, T>(value: T) -> Result<T, T> {
+    if CONDITION {
+        Ok(value)
+    } else {
+        Err(value)
+    }
+}
+
+#[must_use]
+#[inline(always)]
 pub fn min<T: PartialOrd<T>>(a: T, b: T) -> T {
     crate::min!(a, b)
 }
@@ -99,6 +121,21 @@ pub fn swap_pair<L, R>(pair: (L, R)) -> (R, L) {
 #[inline(always)]
 pub const fn pass<T>(value: T) -> T {
     value
+}
+
+#[inline(always)]
+pub const fn returns<T>(value: T) -> impl FnOnce() -> T {
+    move || value
+}
+
+#[inline(always)]
+pub const fn returns_clone<T: Clone>(value: T) -> impl Fn() -> T {
+    move || value.clone()
+}
+
+#[inline(always)]
+pub const fn returns_copy<T: Copy>(value: T) -> impl Fn() -> T {
+    move || value
 }
 
 /// This functions just like `drop()`, but with a more clear name for instances where you want to ignore a value passed to a callback.
